@@ -3,28 +3,29 @@ package com.tienda.pedidos.service;
 import com.tienda.pedidos.dto.ItemPedido;
 import com.tienda.pedidos.dto.PedidoRequest;
 import com.tienda.pedidos.dto.ResultadoPedido;
-import com.tienda.pedidos.descuento.SelectorEstrategiaDescuento;
-import com.tienda.pedidos.validacion.ContextoPedido;
-import com.tienda.pedidos.validacion.ValidadorCliente;
-import com.tienda.pedidos.validacion.ValidadorPedido;
-import com.tienda.pedidos.validacion.ValidadorStock;
+import com.tienda.pedidos.descuento.CalculadorDescuentoFinal;
+import com.tienda.pedidos.validacion.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
 public class GestorPedidos {
     private final ValidadorPedido primerValidador;
-    private final SelectorEstrategiaDescuento selector;
+    private final CalculadorDescuentoFinal calculadorDescuento;
     private final PedidoRepository repository;
     private final NotificacionPedidoService notificacion;
     private final JdbcTemplate jdbcTemplate;
 
     public GestorPedidos(ValidadorStock stock, ValidadorCliente cliente,
-                         SelectorEstrategiaDescuento selector, PedidoRepository repository,
-                         NotificacionPedidoService notificacion, JdbcTemplate jdbcTemplate) {
+                         CalculadorDescuentoFinal calculadorDescuento,
+                         PedidoRepository repository, NotificacionPedidoService notificacion,
+                         JdbcTemplate jdbcTemplate) {
+        
+        // La cadena vuelve a tener SOLAMENTE validadores reales
         stock.encadenar(cliente);
+
         this.primerValidador = stock;
-        this.selector = selector;
+        this.calculadorDescuento = calculadorDescuento;
         this.repository = repository;
         this.notificacion = notificacion;
         this.jdbcTemplate = jdbcTemplate;
@@ -41,7 +42,9 @@ public class GestorPedidos {
         double subtotal = calcularSubtotal(request);
         contexto.setSubtotal(subtotal);
 
-        double descuento = selector.seleccionar(contexto.getTipoCliente()).calcular(contexto);
+        // Delegación limpia del cálculo de descuento
+        double descuento = calculadorDescuento.calcular(contexto);
+
         double impuesto = (subtotal - (subtotal * descuento)) * 0.19;
         double total = subtotal - (subtotal * descuento) + impuesto;
 

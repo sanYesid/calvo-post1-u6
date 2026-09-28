@@ -1,4 +1,3 @@
-// Contexto mutable que viaja a traves de la cadena de validacion
 package com.tienda.pedidos.validacion;
 
 import com.tienda.pedidos.dto.PedidoRequest;
@@ -10,7 +9,9 @@ public class ContextoPedido {
     private boolean rechazado = false;
     private String motivoRechazo;
 
-    public ContextoPedido(PedidoRequest request) { this.request = request; }
+    public ContextoPedido(PedidoRequest request) {
+        this.request = request;
+    }
 
     public PedidoRequest getRequest() { return request; }
     public String getTipoCliente() { return tipoCliente; }
@@ -19,5 +20,9 @@ public class ContextoPedido {
     public void setSubtotal(double subtotal) { this.subtotal = subtotal; }
     public boolean isRechazado() { return rechazado; }
     public String getMotivoRechazo() { return motivoRechazo; }
-    public void rechazar(String motivo) { this.rechazado = true; this.motivoRechazo = motivo; }
+
+    public void rechazar(String motivo) {
+        this.rechazado = true;
+        this.motivoRechazo = motivo;
+    }
 }

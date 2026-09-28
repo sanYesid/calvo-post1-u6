@@ -6,26 +6,29 @@ import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 
-@org.springframework.stereotype.Repository
+@Repository
 public class PedidoRepository {
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
 
-    public PedidoRepository(org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
+    public PedidoRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
     public Long guardar(ContextoPedido contexto, double descuento, double impuesto, double total) {
         jdbcTemplate.update(
-            "INSERT INTO pedidos (cliente_id, subtotal, descuento, impuesto, total, fecha, estado) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO pedidos (cliente_id, subtotal, descuento, impuesto, total, fecha, estado) VALUES (?, ?, ?, ?, ?, ?, ?)",
             contexto.getRequest().getClienteId(), contexto.getSubtotal(), descuento, impuesto, total,
-            java.sql.Timestamp.valueOf(java.time.LocalDateTime.now()), "CONFIRMADO");
-        Long pedidoId = jdbcTemplate.queryForObject("CALL IDENTITY()", Long.class);
+            Timestamp.valueOf(LocalDateTime.now()), "CONFIRMADO");
+
+        // Consulta compatible con cualquier dialecto SQL
+        Long pedidoId = jdbcTemplate.queryForObject("SELECT MAX(id) FROM pedidos", Long.class);
+
         for (var item : contexto.getRequest().getItems()) {
             jdbcTemplate.update(
                 "INSERT INTO detalle_pedido (pedido_id, producto_id, cantidad) VALUES (?, ?, ?)",
                 pedidoId, item.getProductoId(), item.getCantidad());
-            jdbcTemplate.update("UPDATE inventario SET stock = stock - ? WHERE producto_id = ?",
+            jdbcTemplate.update(
+                "UPDATE inventario SET stock = stock - ? WHERE producto_id = ?",
                 item.getCantidad(), item.getProductoId());
         }
         return pedidoId;
