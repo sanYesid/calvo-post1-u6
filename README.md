@@ -1,4 +1,20 @@
-## Diagnóstico inicial (antes de refactorizar)
+# Post-contenido — Unidad 6: Antipatrones de Diseño
+
+## Descripción
+Repositorio del post-contenido de la Unidad 6 de Patrones de Diseño
+de Software — Sexto Semestre. Un único proyecto Spring Boot
+(pedidos-service/) con dos partes: diagnóstico y refactorización de
+un antipatrón combinado en GestorPedidos, y diagnóstico y corrección
+de un segundo antipatrón introducido al hacer crecer el mismo
+proyecto con tres campañas de descuento.
+
+
+
+## Decisiones de diseño
+
+### Parte 1 — GestorPedidos
+
+### Diagnóstico inicial (antes de refactorizar)
 
 Se analizó `GestorPedidos.java` . Su único método público,
 `procesarPedido()`.
@@ -66,7 +82,7 @@ regla de validación propia (como MOROSO), hay que tocar también las líneas 44
 Es decir, se viola el principio Abierto/Cerrado: agregar un caso exige
 modificar código existente y releer el método completo para no romperlo.
 
-## Decisiones de Diseño (Parte 1) 
+## Patrones de diseño aplicados  
 ### Validación: Chain of Responsibility   
 - **Elección:** Se eligió *Chain of Responsibility* para encadenar las validaciones porque existe una dependencia de orden estricta y necesidad de corte anticipado (ej. si el stock falla, no se debe consultar el estado de mora del cliente).    
 - **Alternativa descartada:** Una lista de métodos booleanos o `Predicate<ContextoPedido>`. Se descartó porque evalúa todos los predicados sin permitir un corte limpio y encapsulado de la cadena.   
@@ -75,3 +91,139 @@ modificar código existente y releer el método completo para no romperlo.
 - **Elección:** Se eligió *Strategy* para encapsular los algoritmos de cálculo de descuento por tipo de cliente, ya que son mutuamente excluyentes y no dependen de un orden de ejecución.    
 - **Alternativa descartada:** Incluir el cálculo dentro de la cadena de validación. Se descartó porque los descuentos no validan ni rechazan pedidos; mezclarlos en la cadena violaría el principio de responsabilidad única.   
 
+
+### Parte 2 — Crecimiento del proyecto
+
+### Diagnóstico de la Parte 2 (antes de corregir): Golden Hammer
+
+**Contexto.** Mercadeo pidió tres campañas: BLACK_FRIDAY (25%), CORPORATIVO (10%)
+y VOLUMEN (12%). Se implementaron como tres eslabones nuevos de la cadena de
+validación (`PromocionBlackFriday`, `PromocionCorporativo`, `PromocionVolumen`),
+que pasó a tener 5 eslabones: 2 de validación real y 3 de "promoción". El código
+compila y calcula bien; el problema no es funcional sino de diseño.
+
+### 1. Test de forma: ¿el problema tenía forma de cadena?
+
+En la Parte 1 se eligió Chain of Responsibility por tres propiedades. Se
+verificó si las clases nuevas las cumplen:
+
+| Propiedad que justifica la cadena | ValidadorStock / ValidadorCliente | PromocionBlackFriday / Corporativo / Volumen |
+|---|---|---|
+| Dependencia de orden real | Sí: si el stock falla no se consulta al cliente, y el motivo de rechazo depende de quién corre primero | No: todas escriben con `aplicarDescuentoCampana`, que conserva el mayor valor |
+| Corte anticipado | Sí: llaman `contexto.rechazar(...)` | No: ninguna llama a `rechazar` |
+| Contrato "decidir si el pedido continúa o se rechaza" | Sí | No: solo calculan un porcentaje |
+
+Las tres clases nuevas incumplen las tres propiedades, es decir, el problema no
+tenía forma de cadena.
+
+### 2. ¿Hay dependencia de orden entre las campañas, o con los validadores?
+
+No. La política de combinación está fija en `ContextoPedido`:
+
+```java
+// ContextoPedido.aplicarDescuentoCampana()
+if (valor > this.descuentoCampana) this.descuentoCampana = valor; // el mayor descuento gana
+```
+
+El máximo es conmutativo y asociativo, así que cualquier permutación de los tres
+eslabones produce el mismo `descuentoCampana`.
+
+**Experimento de verificación:** se invirtió el orden en el constructor de
+`GestorPedidos` (`.encadenar(volumen).encadenar(corporativo).encadenar(blackFriday)`)
+y se ejecutaron los mismos pedidos de prueba:
+
+| Pedido de prueba | Orden original (BF → Corp → Vol) | Orden invertido (Vol → Corp → BF) |
+|---|---|---|
+| [completar] | [total] | [total] |
+| [completar] | [total] | [total] |
+
+Los totales son idénticos en todos los casos [confirmar con tus resultados].
+
+*Precisión:* las campañas sí corren después de los validadores, pero eso no es
+una dependencia entre eslabones. Ya lo garantiza `GestorPedidos`, que solo calcula
+precios cuando `contexto.isRechazado()` es falso, sin necesidad de una cadena.
+
+### 3. ¿Por qué una clase llamada `ValidadorPedido` contiene clases que nunca rechazan?
+
+Porque las promociones solo reutilizan la infraestructura de la cadena
+(`encadenar()` y `validar()`), no su semántica. El corte anticipado de
+`ValidadorPedido.validar()` no tiene sentido para ellas:
+
+```java
+ejecutar(contexto);
+if (!contexto.isRechazado() && siguiente != null) { siguiente.validar(contexto); }
+```
+
+El comentario de `PromocionBlackFriday` lo admite: "nunca rechaza - este eslabon
+no valida nada". El nombre del tipo base miente: quien lee
+`stock.encadenar(cliente).encadenar(blackFriday)...` en el constructor de
+`GestorPedidos` cree que hay 5 validaciones, cuando 3 son cálculos de precio.
+
+Hay además dos síntomas de que están en la etapa equivocada del flujo:
+- Se ejecutan dentro de `primerValidador.validar(contexto)`, antes de
+  `calcularSubtotal(request)` y `contexto.setSubtotal(...)`. Por eso
+  `PromocionVolumen` no puede usar datos ya calculados y recalcula
+  `totalUnidades` desde el request (lo dice su propio comentario).
+- Se comunican con `GestorPedidos` mediante un efecto lateral: escriben en el
+  campo mutable `descuentoCampana`, que `GestorPedidos` lee después con
+  `Math.max(descuentoTipoCliente, contexto.getDescuentoCampana())`. Quien lee
+  `procesarPedido()` no ve que la cadena produce un descuento.
+
+### 4. ¿Qué pasaría si dos campañas tuvieran que combinarse (sumar en vez de tomar el máximo)?
+
+La cadena no lo permite sin ambigüedad:
+- La política "el mayor gana" está dentro de `ContextoPedido` y la comparten las
+  tres campañas. Cambiarla para dos campañas obliga a modificar el contexto
+  (afectando a todas) o a añadir banderas por campaña.
+- La regla de combinación queda repartida en dos lugares: `aplicarDescuentoCampana`
+  (entre campañas) y el `Math.max` de `GestorPedidos` (contra el descuento por
+  tipo de cliente).
+- Si aparecen topes, exclusiones o prioridades (p. ej. "Black Friday no se acumula
+  con otras"), el orden de los `.encadenar(...)` pasaría a ser una regla de
+  negocio implícita, aunque las clases se declararon sin dependencia de orden.
+
+### 5. ¿Se eligió por adecuación al problema o porque "ya existía y funcionó"?
+
+Por lo segundo. Evidencia:
+- El comentario de `PromocionBlackFriday` dice que se agregó a la cadena porque
+  "los eslabones ya sabian como conectarse entre si", y que solo "aprovecha que
+  la cadena ya existe para engancharse".
+- El commit `feat: agregar 3 campanas de descuento como eslabones de la cadena
+  de validacion` describe el mecanismo elegido, no el problema resuelto.
+- La herramienta adecuada ya existía en el mismo proyecto: `EstrategiaDescuento`
+  (`double calcular(ContextoPedido)`) y sus implementaciones `DescuentoVip` y
+  `DescuentoFrecuente`, que hacen exactamente lo mismo que las tres campañas
+  (un porcentaje a partir de datos del pedido o del cliente, sin orden ni corte).
+
+### Diagnóstico
+
+**Golden Hammer.** Se reutilizó Chain of Responsibility, el patrón que resolvió la
+Parte 1, en un problema con forma distinta: sin dependencia de orden, sin corte
+anticipado y sin decisión de rechazo. La consecuencia es un tipo base
+(`ValidadorPedido`) con un contrato roto, estado mutable compartido como canal
+oculto de comunicación y una regla de combinación de descuentos dispersa. No se
+evaluó si el nuevo problema tenía la misma forma que el anterior.
+
+### Decisiones de Diseño (Parte 2)
+
+#### Strategy en vez de más eslabones de Cadena
+- **Justificación:** Se corrigió modelando las tres campañas promocionales como `EstrategiaDescuento` combinadas mediante `CalculadorDescuentoFinal`. De esta forma, calculan un porcentaje sin depender de un orden de ejecución ni manipular estado mutable compartido, preservando la semántica estricta de la cadena de validación `ValidadorPedido`.
+- **Alternativa descartada:** Mantener las promociones como eslabones dentro de la cadena `ValidadorPedido` (o agregar métodos booleanos condicionales dentro del contexto). Fue descartada explícitamente por ser la causa del antipatrón *Golden Hammer*: reutilizar una herramienta conocida sin verificar que el nuevo problema tuviera su misma forma.
+
+#### Eliminación directa del código descartado (Evitar Lava Flow)
+- **Justificación:** Las clases `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen` del paquete `validacion` y el campo `descuentoCampana` del contexto fueron eliminados por completo en vez de dejarlos comentados.
+- **Alternativa descartada:** Dejar las clases o bloques de código comentados "por si acaso se necesitan después". Se descartó porque es el mecanismo clásico que da origen al antipatrón *Lava Flow* (código muerto que nadie se atreve a borrar por incertidumbre). El historial de Git es el lugar correcto para conservar la referencia histórica.
+
+## Cómo ejecutar
+```
+$ mvn spring-boot:run
+$ mvn test
+```
+
+## Herramientas utilizadas
+- Java 17, Spring Boot, Spring JDBC, Maven, H2 Database
+- VS Code / IntelliJ IDEA, Git, GitHub
+
+## Conclusiones
+
+Este ejercicio me mostró que diagnosticar antes de refactorizar es tan importante como elegir el patrón: en la Parte 1, citar líneas, responsabilidades y niveles de anidamiento de `GestorPedidos` me permitió distinguir un God Object (la clase con seis razones para cambiar) de un Spaghetti Code (el método con anidamiento y estado compartido), y separar cada responsabilidad con el patrón que le correspondía: Chain of Responsibility para las validaciones, que sí tienen dependencia de orden y corte anticipado, y Strategy para el descuento, que solo depende del tipo de cliente. La Parte 2 me enseñó que un patrón que funcionó bien no se puede reutilizar por costumbre: las tres campañas encajaban como eslabones de la cadena solo en apariencia, ya que no tenían orden ni corte anticipado, y eso dejó un tipo base con un contrato roto y un campo mutable como canal oculto. Corregirlo con `EstrategiaDescuento` y `CalculadorDescuentoFinal`, y eliminar el código descartado en lugar de comentarlo para evitar un Lava Flow, confirmó que antes de aplicar una herramienta conocida hay que comprobar si el nuevo problema tiene la misma forma que el anterior. Finalmente, verificar que las salidas del sistema fueran equivalentes antes y después de cada refactorización me dio confianza para cambiar el diseño sin alterar el comportamiento.
