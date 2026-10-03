@@ -3,14 +3,17 @@ package com.tienda.pedidos.validacion;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import java.time.Clock;
 import java.time.LocalTime;
 
 @Component
 public class ValidadorCliente extends ValidadorPedido {
     private final JdbcTemplate jdbcTemplate;
+    private final Clock clock;
 
-    public ValidadorCliente(JdbcTemplate jdbcTemplate) {
+    public ValidadorCliente(JdbcTemplate jdbcTemplate, Clock clock) {
         this.jdbcTemplate = jdbcTemplate;
+        this.clock = clock;
     }
 
     @Override
@@ -38,7 +41,7 @@ public class ValidadorCliente extends ValidadorPedido {
                 "SELECT SUM(monto) FROM facturas WHERE cliente_id = ? AND pagada = false",
                 Double.class, clienteId);
 
-            boolean dentroDeHorario = LocalTime.now().isBefore(LocalTime.of(20, 0));
+            boolean dentroDeHorario = LocalTime.now(clock).isBefore(LocalTime.of(20, 0));
             if (deuda != null && deuda > 0 && dentroDeHorario) {
                 contexto.rechazar("Cliente con deuda pendiente: $" + deuda);
             }
