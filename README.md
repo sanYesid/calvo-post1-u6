@@ -34,7 +34,7 @@ Se analizó `GestorPedidos.java` . Su único método público,
 **Validación de cliente y mora :** Realiza consultas SQL para verificar la existencia del cliente, calcula deudas pendientes de facturas y aplica reglas condicionales basadas en la hora del sistema (`LocalTime.now()`).   
 **Cálculo de subtotal :**  Realiza lecturas directas a la tabla `productos` mediante consultas SQL iterativas por cada ítem.  
 **Descuento, impuesto y total :** Aplica la lógica de negocio para determinar porcentajes de descuento según tipo de cliente e historial, e calcula impuestos y totales.    
-**Persistencia :**Realiza inserciones en las tablas `pedidos` y `detalle_pedido`, y actualiza manualmente la tabla `inventario` con consultas SQL explícitas sin abstracción de repositorio ni manejo transaccional.   
+**Persistencia :** Realiza inserciones en las tablas `pedidos` y `detalle_pedido`, y actualiza manualmente la tabla `inventario` con consultas SQL explícitas sin abstracción de repositorio ni manejo transaccional.   
 **Notificación :** Formatea el correo electrónico mediante un `StringBuilder` y gestiona el envío de notificaciones por email.   
 
 Un cambio en las tarifas de descuento, en el formato del correo, en el esquema
@@ -118,30 +118,23 @@ tenía forma de cadena.
 
 ### 2. ¿Hay dependencia de orden entre las campañas, o con los validadores?
 
-No. La política de combinación está fija en `ContextoPedido`:
+**Verificación de equivalencia:** como `PromocionBlackFriday`, `PromocionCorporativo`
+y `PromocionVolumen` se eliminaron del proyecto (Paso 7), no es posible reejecutar
+la versión con los tres eslabones para comparar salidas directamente. En su lugar,
+se calculó a mano el resultado esperado con la fórmula original
+(`Math.max(descuentoTipoCliente, descuentoCampana)`, donde `descuentoCampana` es
+el mayor de las tres campañas) y se comparó contra el total que produce
+`CalculadorDescuentoFinal`, verificado con `GestorPedidosTest`:
 
-```java
-// ContextoPedido.aplicarDescuentoCampana()
-if (valor > this.descuentoCampana) this.descuentoCampana = valor; // el mayor descuento gana
-```
+| Pedido de prueba | Campaña relevante | Cálculo manual esperado | Total obtenido (test) |
+|---|---|---|---|
+| Cliente FRECUENTE (id 2), 2x Mouse | Corporativo 10% gana sobre Frecuente 4% | subtotal 100.000 → desc. 10% → 90.000 + 19% imp. = **107.100** | **107.100,0** ✓ |
+| Cliente ESTANDAR (id 4), 21x Laptop | Volumen 12% (>20 unidades) | subtotal 25.200.000 → desc. 12% → 22.176.000 + 19% imp. = **26.389.440** | **26.389.440,0** ✓ |
 
-El máximo es conmutativo y asociativo, así que cualquier permutación de los tres
-eslabones produce el mismo `descuentoCampana`.
-
-**Experimento de verificación:** se invirtió el orden en el constructor de
-`GestorPedidos` (`.encadenar(volumen).encadenar(corporativo).encadenar(blackFriday)`)
-y se ejecutaron los mismos pedidos de prueba:
-
-| Pedido de prueba | Orden original (BF → Corp → Vol) | Orden invertido (Vol → Corp → BF) |
-|---|---|---|
-| [completar] | [total] | [total] |
-| [completar] | [total] | [total] |
-
-Los totales son idénticos en todos los casos [confirmar con tus resultados].
-
-*Precisión:* las campañas sí corren después de los validadores, pero eso no es
-una dependencia entre eslabones. Ya lo garantiza `GestorPedidos`, que solo calcula
-precios cuando `contexto.isRechazado()` es falso, sin necesidad de una cadena.
+Además, como `aplicarDescuentoCampana` solo conservaba el mayor valor entre las tres
+campañas (operación conmutativa y asociativa), el orden de los `.encadenar(...)`
+nunca podía alterar el resultado — ver la tabla de propiedades del punto 1, donde
+ninguna de las tres clases dependía de ejecutarse antes o después de otra.
 
 ### 3. ¿Por qué una clase llamada `ValidadorPedido` contiene clases que nunca rechazan?
 
